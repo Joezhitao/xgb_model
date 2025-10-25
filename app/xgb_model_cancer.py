@@ -5,6 +5,7 @@ import pandas as pd
 import shap
 import matplotlib.pyplot as plt
 import os
+import re
 
 # 设置页面配置
 st.set_page_config(page_title="AKI Prediction Model", layout="wide")
@@ -49,6 +50,26 @@ feature_ranges = {
     "Hb": {"type": "numerical", "min": 0.0, "max": 20.0, "default": 14.0, "description": "Hemoglobin"},
     "CPR": {"type": "numerical", "min": 0.0, "max": 100.0, "default": 5.0, "description": "C-Reactive Protein"}
 }
+
+# 辅助函数：将任何格式的数值转换为浮点数
+def safe_float_convert(value):
+    if isinstance(value, (int, float)):
+        return float(value)
+    elif isinstance(value, str):
+        # 移除方括号、空格等字符
+        clean_str = re.sub(r'[\[\]\s]', '', value)
+        # 处理科学计数法
+        if 'E' in clean_str or 'e' in clean_str:
+            try:
+                return float(clean_str)
+            except:
+                return 0.0
+        try:
+            return float(clean_str)
+        except:
+            return 0.0
+    else:
+        return 0.0
 
 # Streamlit 界面
 st.title("AKI Prediction Model with SHAP Visualization")
@@ -106,65 +127,76 @@ with col2:
             # 计算 SHAP 值
             st.subheader("Feature Contribution Analysis")
             with st.spinner("Calculating SHAP values..."):
-                explainer = shap.TreeExplainer(model)
-                shap_values = explainer.shap_values(input_df)
-                
-                # 检查shap_values的结构
-                if isinstance(shap_values, list):
-                    # 对于多类别问题，选择类别1（正类）的SHAP值
-                    shap_values_to_plot = shap_values[1][0]
-                    expected_value = explainer.expected_value[1] if isinstance(explainer.expected_value, list) else explainer.expected_value
-                else:
-                    # 对于二分类问题，直接使用返回的SHAP值
-                    shap_values_to_plot = shap_values[0]
-                    expected_value = explainer.expected_value
-
-                # 创建条形图
-                fig, ax = plt.subplots(figsize=(10, 6))
-                features = input_df.columns
-                y_pos = np.arange(len(features))
-                
-                # 根据SHAP值的正负设置颜色
-                colors = ['#FF4B4B' if x > 0 else '#1E88E5' for x in shap_values_to_plot]
-                
-                # 绘制水平条形图
-                bars = ax.barh(y_pos, shap_values_to_plot, color=colors)
-                ax.set_yticks(y_pos)
-                ax.set_yticklabels(features)
-                ax.set_xlabel('SHAP Value (Impact on Prediction)')
-                ax.set_title('Feature Contributions to AKI Risk')
-                
-                # 添加基准线
-                ax.axvline(x=0, color='black', linestyle='-', alpha=0.3)
-                
-                # 添加数值标签
-                for i, v in enumerate(shap_values_to_plot):
-                    if v >= 0:
-                        ax.text(v + 0.001, i, f'+{v:.3f}', va='center', fontweight='bold')
+                try:
+                    explainer = shap.TreeExplainer(model)
+                    shap_values = explainer.shap_values(input_df)
+                    
+                    # 检查shap_values的结构并进行安全转换
+                    if isinstance(shap_values, list):
+                        # 对于多类别问题，选择类别1（正类）的SHAP值
+                        shap_values_raw = shap_values[1][0]
+                        expected_value = explainer.expected_value[1] if isinstance(explainer.expected_value, list) else explainer.expected_value
                     else:
-                        ax.text(v - 0.025, i, f'{v:.3f}', va='center', fontweight='bold')
-                
-                # 添加图例
-                from matplotlib.patches import Patch
-                legend_elements = [
-                    Patch(facecolor='#FF4B4B', label='Increases Risk'),
-                    Patch(facecolor='#1E88E5', label='Decreases Risk')
-                ]
-                ax.legend(handles=legend_elements, loc='lower right')
-                
-                # 美化图表
-                ax.spines['top'].set_visible(False)
-                ax.spines['right'].set_visible(False)
-                ax.grid(axis='x', linestyle='--', alpha=0.7)
-                
-                plt.tight_layout()
-                st.pyplot(fig)
-                
-                # 添加SHAP值解释
-                st.write("The chart above shows how each feature contributes to the prediction:")
-                st.write("- Red bars indicate features that increase the risk of AKI")
-                st.write("- Blue bars indicate features that decrease the risk of AKI")
-                st.write(f"- The base value (expected value) is: {expected_value:.4f}")
+                        # 对于二分类问题，直接使用返回的SHAP值
+                        shap_values_raw = shap_values[0]
+                        expected_value = explainer.expected_value
+                    
+                    # 确保所有SHAP值都是浮点数
+                    shap_values_to_plot = [safe_float_convert(x) for x in shap_values_raw]
+                    
+                    # 显示转换后的SHAP值用于调试
+                    st.write("Debug - SHAP values:", shap_values_to_plot)
+                    
+                    # 创建条形图
+                    fig, ax = plt.subplots(figsize=(10, 6))
+                    features = input_df.columns
+                    y_pos = np.arange(len(features))
+                    
+                    # 根据SHAP值的正负设置颜色
+                    colors = ['#FF4B4B' if x > 0 else '#1E88E5' for x in shap_values_to_plot]
+                    
+                    # 绘制水平条形图
+                    bars = ax.barh(y_pos, shap_values_to_plot, color=colors)
+                    ax.set_yticks(y_pos)
+                    ax.set_yticklabels(features)
+                    ax.set_xlabel('SHAP Value (Impact on Prediction)')
+                    ax.set_title('Feature Contributions to AKI Risk')
+                    
+                    # 添加基准线
+                    ax.axvline(x=0, color='black', linestyle='-', alpha=0.3)
+                    
+                    # 添加数值标签
+                    for i, v in enumerate(shap_values_to_plot):
+                        if v >= 0:
+                            ax.text(v + 0.001, i, f'+{v:.3f}', va='center', fontweight='bold')
+                        else:
+                            ax.text(v - 0.025, i, f'{v:.3f}', va='center', fontweight='bold')
+                    
+                    # 添加图例
+                    from matplotlib.patches import Patch
+                    legend_elements = [
+                        Patch(facecolor='#FF4B4B', label='Increases Risk'),
+                        Patch(facecolor='#1E88E5', label='Decreases Risk')
+                    ]
+                    ax.legend(handles=legend_elements, loc='lower right')
+                    
+                    # 美化图表
+                    ax.spines['top'].set_visible(False)
+                    ax.spines['right'].set_visible(False)
+                    ax.grid(axis='x', linestyle='--', alpha=0.7)
+                    
+                    plt.tight_layout()
+                    st.pyplot(fig)
+                    
+                    # 添加SHAP值解释
+                    st.write("The chart above shows how each feature contributes to the prediction:")
+                    st.write("- Red bars indicate features that increase the risk of AKI")
+                    st.write("- Blue bars indicate features that decrease the risk of AKI")
+                    st.write(f"- The base value (expected value) is: {safe_float_convert(expected_value):.4f}")
+                    
+                except Exception as e:
+                    st.error(f"Error in SHAP calculation: {str(e)}")
+                    st.write("Displaying prediction without SHAP visualization.")
                 
                 # 添加特征值表格
                 st.subheader("Current Patient Features")
