@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import shap
 import matplotlib.pyplot as plt
+import os
 
 # 设置页面配置
 st.set_page_config(page_title="AKI Prediction Model", layout="wide")
@@ -11,7 +12,32 @@ st.set_page_config(page_title="AKI Prediction Model", layout="wide")
 # 加载保存的XGBoost模型
 @st.cache_resource
 def load_model():
-    return joblib.load('xgb.pkl')  # 使用相对路径
+    # 使用相对路径加载模型 - 模型文件应该与app.py在同一目录下
+    model_path = 'xgb.pkl'
+    
+    try:
+        return joblib.load(model_path)
+    except FileNotFoundError:
+        # 如果找不到，尝试其他可能的路径
+        st.error(f"Model not found at {model_path}. Trying alternative paths...")
+        
+        # 列出当前目录下的文件，帮助调试
+        st.write("Current directory:", os.getcwd())
+        st.write("Files in directory:", os.listdir())
+        
+        # 尝试其他可能的路径
+        alternative_paths = ['./xgb.pkl', '../xgb.pkl', 'app/xgb.pkl']
+        for path in alternative_paths:
+            try:
+                if os.path.exists(path):
+                    st.success(f"Found model at: {path}")
+                    return joblib.load(path)
+            except:
+                continue
+                
+        # 如果所有尝试都失败，显示错误
+        st.error("Failed to load model. Please check the model file path.")
+        st.stop()
 
 model = load_model()
 
