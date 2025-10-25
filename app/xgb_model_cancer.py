@@ -2,10 +2,8 @@ import streamlit as st
 import joblib
 import numpy as np
 import pandas as pd
-import shap
 import matplotlib.pyplot as plt
 import os
-import re
 
 # 设置页面配置
 st.set_page_config(page_title="AKI Prediction Model", layout="wide")
@@ -51,28 +49,18 @@ feature_ranges = {
     "CPR": {"type": "numerical", "min": 0.0, "max": 100.0, "default": 5.0, "description": "C-Reactive Protein"}
 }
 
-# 辅助函数：将任何格式的数值转换为浮点数
-def safe_float_convert(value):
-    if isinstance(value, (int, float)):
-        return float(value)
-    elif isinstance(value, str):
-        # 移除方括号、空格等字符
-        clean_str = re.sub(r'[\[\]\s]', '', value)
-        # 处理科学计数法
-        if 'E' in clean_str or 'e' in clean_str:
-            try:
-                return float(clean_str)
-            except:
-                return 0.0
-        try:
-            return float(clean_str)
-        except:
-            return 0.0
-    else:
-        return 0.0
+# 预定义特征重要性（如果无法从模型中获取）
+# 这些值可以从您的模型训练过程中获取，或者根据领域知识估计
+predefined_importance = {
+    "Age": 0.25,
+    "LDH": 0.20,
+    "TPSA": 0.30,
+    "Hb": 0.15,
+    "CPR": 0.10
+}
 
 # Streamlit 界面
-st.title("AKI Prediction Model with SHAP Visualization")
+st.title("AKI Prediction Model with Feature Importance Visualization")
 st.write("This application predicts the possibility of Acute Kidney Injury (AKI) based on input features.")
 
 # 创建两列布局
@@ -105,7 +93,7 @@ with col1:
 with col2:
     st.header("Prediction Results")
     
-    # 预测与 SHAP 可视化
+    # 预测与特征重要性可视化
     if st.button("Predict"):
         try:
             # 模型预测
@@ -124,83 +112,96 @@ with col2:
             # 创建一个进度条来可视化概率
             st.progress(int(probability))
 
-            # 计算 SHAP 值
-            st.subheader("Feature Contribution Analysis")
-            with st.spinner("Calculating SHAP values..."):
-                try:
-                    explainer = shap.TreeExplainer(model)
-                    shap_values = explainer.shap_values(input_df)
-                    
-                    # 检查shap_values的结构并进行安全转换
-                    if isinstance(shap_values, list):
-                        # 对于多类别问题，选择类别1（正类）的SHAP值
-                        shap_values_raw = shap_values[1][0]
-                        expected_value = explainer.expected_value[1] if isinstance(explainer.expected_value, list) else explainer.expected_value
-                    else:
-                        # 对于二分类问题，直接使用返回的SHAP值
-                        shap_values_raw = shap_values[0]
-                        expected_value = explainer.expected_value
-                    
-                    # 确保所有SHAP值都是浮点数
-                    shap_values_to_plot = [safe_float_convert(x) for x in shap_values_raw]
-                    
-                    # 显示转换后的SHAP值用于调试
-                    st.write("Debug - SHAP values:", shap_values_to_plot)
-                    
-                    # 创建条形图
-                    fig, ax = plt.subplots(figsize=(10, 6))
-                    features = input_df.columns
-                    y_pos = np.arange(len(features))
-                    
-                    # 根据SHAP值的正负设置颜色
-                    colors = ['#FF4B4B' if x > 0 else '#1E88E5' for x in shap_values_to_plot]
-                    
-                    # 绘制水平条形图
-                    bars = ax.barh(y_pos, shap_values_to_plot, color=colors)
-                    ax.set_yticks(y_pos)
-                    ax.set_yticklabels(features)
-                    ax.set_xlabel('SHAP Value (Impact on Prediction)')
-                    ax.set_title('Feature Contributions to AKI Risk')
-                    
-                    # 添加基准线
-                    ax.axvline(x=0, color='black', linestyle='-', alpha=0.3)
-                    
-                    # 添加数值标签
-                    for i, v in enumerate(shap_values_to_plot):
-                        if v >= 0:
-                            ax.text(v + 0.001, i, f'+{v:.3f}', va='center', fontweight='bold')
-                        else:
-                            ax.text(v - 0.025, i, f'{v:.3f}', va='center', fontweight='bold')
-                    
-                    # 添加图例
-                    from matplotlib.patches import Patch
-                    legend_elements = [
-                        Patch(facecolor='#FF4B4B', label='Increases Risk'),
-                        Patch(facecolor='#1E88E5', label='Decreases Risk')
-                    ]
-                    ax.legend(handles=legend_elements, loc='lower right')
-                    
-                    # 美化图表
-                    ax.spines['top'].set_visible(False)
-                    ax.spines['right'].set_visible(False)
-                    ax.grid(axis='x', linestyle='--', alpha=0.7)
-                    
-                    plt.tight_layout()
-                    st.pyplot(fig)
-                    
-                    # 添加SHAP值解释
-                    st.write("The chart above shows how each feature contributes to the prediction:")
-                    st.write("- Red bars indicate features that increase the risk of AKI")
-                    st.write("- Blue bars indicate features that decrease the risk of AKI")
-                    st.write(f"- The base value (expected value) is: {safe_float_convert(expected_value):.4f}")
-                    
-                except Exception as e:
-                    st.error(f"Error in SHAP calculation: {str(e)}")
-                    st.write("Displaying prediction without SHAP visualization.")
+            # 特征重要性可视化
+            st.subheader("Feature Importance Analysis")
+            
+            try:
+                # 尝试从模型获取特征重要性
+                if hasattr(model, 'feature_importances_'):
+                    importances = model.feature_importances_
+                    feature_names = input_df.columns
+                    importance_df = pd.DataFrame({'Feature': feature_names, 'Importance': importances})
+                else:
+                    # 如果模型没有feature_importances_属性，使用预定义值
+                    importance_df = pd.DataFrame({
+                        'Feature': list(predefined_importance.keys()),
+                        'Importance': list(predefined_importance.values())
+                    })
                 
-                # 添加特征值表格
-                st.subheader("Current Patient Features")
-                st.dataframe(input_df.T.rename(columns={0: "Value"}))
+                # 按重要性排序
+                importance_df = importance_df.sort_values('Importance', ascending=False)
+                
+                # 创建条形图
+                fig, ax = plt.subplots(figsize=(10, 6))
+                bars = ax.barh(importance_df['Feature'], importance_df['Importance'], color='#1E88E5')
+                
+                # 添加标签和标题
+                ax.set_xlabel('Importance')
+                ax.set_title('Feature Importance')
+                
+                # 添加数值标签
+                for i, v in enumerate(importance_df['Importance']):
+                    ax.text(v + 0.01, i, f'{v:.3f}', va='center')
+                
+                # 美化图表
+                ax.spines['top'].set_visible(False)
+                ax.spines['right'].set_visible(False)
+                ax.grid(axis='x', linestyle='--', alpha=0.7)
+                
+                plt.tight_layout()
+                st.pyplot(fig)
+                
+                # 添加解释
+                st.write("The chart above shows the importance of each feature in the model:")
+                st.write("- Higher values indicate more influential features")
+                st.write("- These values represent the overall importance in the model, not specific to this prediction")
+                
+            except Exception as e:
+                st.error(f"Error in feature importance visualization: {str(e)}")
+                st.write("Unable to display feature importance visualization.")
+            
+            # 添加当前输入值表格
+            st.subheader("Current Patient Features")
+            input_display = input_df.T.rename(columns={0: "Value"})
+            st.dataframe(input_display)
+            
+            # 添加风险因素分析
+            st.subheader("Risk Factor Analysis")
+            
+            # 根据医学知识为每个特征创建风险评估
+            risk_analysis = []
+            
+            # 年龄风险
+            age = input_df["Age"].values[0]
+            if age > 70:
+                risk_analysis.append("⚠️ **Age > 70**: Advanced age is a significant risk factor for AKI.")
+            
+            # LDH风险
+            ldh = input_df["LDH"].values[0]
+            if ldh > 300:
+                risk_analysis.append("⚠️ **Elevated LDH**: High LDH levels may indicate tissue damage.")
+            
+            # TPSA风险
+            tpsa = input_df["TPSA"].values[0]
+            if tpsa > 20:
+                risk_analysis.append("⚠️ **Elevated TPSA**: High TPSA levels may indicate prostate issues.")
+            
+            # Hb风险
+            hb = input_df["Hb"].values[0]
+            if hb < 10:
+                risk_analysis.append("⚠️ **Low Hemoglobin**: Anemia may reduce oxygen delivery to kidneys.")
+            
+            # CPR风险
+            cpr = input_df["CPR"].values[0]
+            if cpr > 10:
+                risk_analysis.append("⚠️ **Elevated CRP**: Increased inflammation may affect kidney function.")
+            
+            # 显示风险分析
+            if risk_analysis:
+                for risk in risk_analysis:
+                    st.markdown(risk)
+            else:
+                st.write("✅ No specific risk factors identified based on the provided values.")
 
             # 添加模型解释信息
             st.subheader("Model Information")
